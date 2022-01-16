@@ -11,11 +11,13 @@ import Alamofire
 class JoinVC: UIViewController,UITableViewDataSource,UITableViewDelegate {
     @IBOutlet weak var profile: UIImageView!
     @IBOutlet weak var tableView: UITableView! // 정적인 테이블뷰 만들기
+    @IBOutlet weak var indicatorView: UIActivityIndicatorView!
     
     //테이블 뷰에 들어갈 텍스트 필드들
     var fieldAccount: UITextField!
     var fieldPassword: UITextField!
     var fieldName: UITextField!
+    var isCalling = false // 중복 실행을 방지할 플래그 변수
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -29,10 +31,23 @@ class JoinVC: UIViewController,UITableViewDataSource,UITableViewDelegate {
         //프로필 이미지에 탭 제스쳐 및 액션 이벤트 설정
         let gesture = UITapGestureRecognizer(target: self, action: #selector(self.tappedProfile(_:)))
         self.profile.addGestureRecognizer(gesture)
+        
+        self.view.bringSubviewToFront(self.indicatorView) // 인디케이터 뷰를 맨 앞으로
     }
     
     // 계정 정보 전송 및 응답처리 (API)
     @IBAction func submit(_ sender: Any) {
+        // 중복 실행 방지 구문
+        if self.isCalling == true {
+            self.alert("진행 중입니다. 잠시만 기다려주세요.")
+            return
+        } else {
+            self.isCalling = true
+        }
+        
+        // 인디케이터 뷰 애니메이션 시작
+        self.indicatorView.startAnimating()
+        
         // 1. 전달할 값 준비
         // 1-1. 이미지를 Base64 인코딩처리
         let profile = self.profile.image!.pngData()?.base64EncodedString()
@@ -58,16 +73,22 @@ class JoinVC: UIViewController,UITableViewDataSource,UITableViewDelegate {
         
         // 3. 서버 응답값 처리
         call.responseDecodable(of: Json.self ) { response in
+            self.indicatorView.stopAnimating() // 인디케이터 뷰 애니메이션 종료
             switch response.result {
             case .success(let value): // 서버 호출 성공
                 if value.result_code == 0 { // HTTP Code가 0 이면 정상 알림
-                    self.alert("가입이 완료되었습니다.")
+                    self.alert("가입이 완료되었습니다."){
+                        self.performSegue(withIdentifier: "backProfileVC", sender: self) // 프로필화면으로 돌아가기.
+                    }
+                   
                 } else { // 그 외에 코드가 오면 오류 경고메세지.
                     self.alert("오류 발생 : \(value.error_msg)")
+                    self.isCalling = false // 중복 방지 해제.
                 }
                 break
             case .failure(_): // 서버 호출 실패
                 self.alert("서버 호출 과정에서 오류가 발생했습니다.")
+                self.isCalling = false // 중복 방지 해제.
                 break
             }
         

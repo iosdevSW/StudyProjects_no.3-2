@@ -12,10 +12,12 @@ class ProfileVC: UIViewController,UITableViewDelegate,UITableViewDataSource,UIIm
     let profileImage = UIImageView() // 프로필 사진 이미지
     let tv = UITableView() //프로필 목록
     let uinfo = UserInfoManager() //개인정보 관리 매니저
+    var isCalling = false // API호출 상태값 관리할 변수
+    @IBOutlet weak var indicatorView: UIActivityIndicatorView!
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        
+        self.view.bringSubviewToFront(self.indicatorView)// 맨 앞으로
         self.navigationItem.title = "프로필"
         let backBtn = UIBarButtonItem(title: "닫기", style: .plain, target: self, action: #selector(self.close(_:)))
         
@@ -94,6 +96,13 @@ class ProfileVC: UIViewController,UITableViewDelegate,UITableViewDataSource,UIIm
     }
     
     @objc func doLogin(_ sender: Any){
+        if self.isCalling == true {
+            self.alert("응답을 기다리는 중입니다. \n 잠시만 기다려 주세요.")
+            return
+        } else {
+            self.isCalling = true
+        }
+        
         let loginAlert = UIAlertController(title: "LOGIN", message: nil, preferredStyle: .alert)
         loginAlert.addTextField(){
             $0.placeholder = "Your Account"
@@ -103,22 +112,25 @@ class ProfileVC: UIViewController,UITableViewDelegate,UITableViewDataSource,UIIm
             $0.isSecureTextEntry = true
         }
         
-        loginAlert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        loginAlert.addAction(UIAlertAction(title: "Cancel", style: .cancel){ (_) in
+            self.isCalling = false
+        })
         loginAlert.addAction(UIAlertAction(title: "Login", style: .destructive){ (_) in
+            self.indicatorView.startAnimating() // 인디케이터 실행
             let account = loginAlert.textFields?[0].text ?? ""
             let passwd = loginAlert.textFields?[1].text ?? ""
-            if self.uinfo.login(account: account, passwd: passwd) {
-                //로그인 성공 시
-                self.tv.reloadData()
-                self.profileImage.image = self.uinfo.profile
+            //비동기 방식으로 변경!
+            self.uinfo.login(account: account, passwd: passwd, success: {
+                self.indicatorView.stopAnimating() // 인디케이터 종료
+                self.isCalling = false
+                self.tv.reloadData() // 테이블 뷰 갱신
+                self.profileImage.image = self.uinfo.profile // 프로필 이미지 갱신
                 self.drawBtn()
-            } else {
-                let msg = "로그인에 실패하였습니다."
-                let alert = UIAlertController(title: nil, message: msg, preferredStyle: .alert)
-                
-                alert.addAction(UIAlertAction(title: "OK", style: .cancel))
-                self.present(alert, animated: false)
-            }
+            }, fail: { msg in
+                self.indicatorView.stopAnimating() //인디케이터 종료
+                self.isCalling = false
+                self.alert(msg)
+            })
         })
         self.present(loginAlert, animated: false)
     }
@@ -218,6 +230,10 @@ class ProfileVC: UIViewController,UITableViewDelegate,UITableViewDataSource,UIIm
             self.profileImage.image = img
         }
         picker.dismiss(animated: true) // 이 구문을 누락하면 피커 컨트롤러창이 안닫힌다고 한다!!
+    }
+    
+    @IBAction func backProfileVC(_ segue: UIStoryboardSegue) {
+        
     }
     
 }
