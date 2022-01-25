@@ -6,6 +6,8 @@
 //
 
 import UIKit
+import Alamofire
+import LocalAuthentication // 터치 아이디 로컬 인증 프레임워크
 
 class ProfileVC: UIViewController,UITableViewDelegate,UITableViewDataSource,UIImagePickerControllerDelegate,UINavigationControllerDelegate {
     
@@ -249,4 +251,161 @@ class ProfileVC: UIViewController,UITableViewDelegate,UITableViewDataSource,UIIm
         
     }
     
+}
+// 토큰 갱신
+extension ProfileVC {
+   //토큰 유효성 검증 메소드
+    func tokenValidate() {
+        // 0. 응답 캐시를 사용하지 않도록
+        // iOS는 HTTP 호출 성능을 목적으로 자주 호출되는 결과를 저장했다가 대신 반환한다.
+        // Token에선 서버와 디바이스간에 동기화 문제가 있을 수 있으므로 제거
+        URLCache.shared.removeAllCachedResponses()
+        
+        // 1. 키체인에 액세스 토큰이 없을 경우 유효성 검증을 진행하지 않음 ( 로그아웃 했거나 로그인 한 적 없는 것이므로. )
+        let tk = TokenUtils()
+        guard let header = tk.getAuthorizationHeader() else { return }
+        
+        // 로딩 인디케이터 시작
+        self.indicatorView.startAnimating()
+        
+        // 2. tokenValidate API 호출
+        let url = "http://swiftapi.rubypaper.co.kr:2029/userAccount/tokenValidate"
+        let validate = AF.request(url, method: .post, encoding: JSONEncoding.default, headers: header)
+        
+        validate.responseData(){ response in
+            self.indicatorView.stopAnimating()
+            
+            switch response.result {
+            case .success(let data):
+                guard let json = try?JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else { return }
+                // 3. 응답 결과 처리
+                let resultCode = json["result_code"] as! Int
+                if resultCode != 0 { // 응답 결과 실패 즉 토큰이 만료 되었을 때
+                    self.touchID() // 로컬 인증 실행
+                }
+                break
+            case .failure(let error):
+                print("error : \(error.localizedDescription)")
+                break
+            }
+        }
+    }
+    
+    // 터치 아이디 인증 메소드
+    func touchID() {
+        // 1. LAContext 인스턴스 생성 (로컬 인증을 관리하는 객체)
+        let context = LAContext()
+        
+        // 2. 로컬인증에 사용할 변수 정의
+        var error: NSError?
+        let msg = "인증이 필요합니다."
+        let deviceAuth = LAPolicy.deviceOwnerAuthenticationWithBiometrics // 인증 정책
+        
+        // 3. 로컬 인증이 사용 가능한지 여부 확인 ( 인증 정책을 만족하는지 bool값 반환 메소드 )
+        if context.canEvaluatePolicy(deviceAuth, error: &error) {
+            // 4. 터치 아이디 인증창 실행
+            // 5. 매개변수 1 : 정책 , 2 : 인증 안내 메시지, 3 : 인증창 실행 성공 클로저 구문
+            context.evaluatePolicy(deviceAuth, localizedReason: msg) { (success, e) in
+                if success {
+                    // 5. 인증 성공 : 토큰 갱신 로직
+                    self.refresh()
+                } else { // 6. 인증 실패
+                    //인증 실패 원인에 대한 대응 로직
+                    print((e?.localizedDescription)!)
+                    
+                    switch (e!._code) {
+                    case LAError.systemCancel.rawValue :
+                        self.alert("시스템에 의해 인증이 취소되었습니다.")
+                    case LAError.userCancel.rawValue :
+                        self.alert("사용자에 의해 인증이 취소되었습니다."){
+                            self.commonLogout(true)
+                        }
+                    case LAError.userFallback.rawValue :
+                        OperationQueue.main.addOperation {
+                            self.commonLogout(true)
+                        }
+                    default:
+                        OperationQueue.main.addOperation {
+                            self.commonLogout(true)
+                        }
+                    }
+                }
+            }
+        } else { // 인증창이 실행 되지 못한 경우
+            print(error!.localizedDescription)
+            
+            switch(error!.code) {
+            case LAError.biometryNotEnrolled.rawValue :
+                print("터치 아이디가 등록되어 있지 않습니다.")
+            case LAError.passcodeNotSet.rawValue :
+                print("패스 코드가 설정되어 있지 않습니다.")
+            default:
+                print("터치 아이디를 사용할 수 없습니다.")
+                OperationQueue.main.addOperation {
+                    self.commonLogout(true)
+                }
+            }
+        }
+    }
+    
+    // 토큰 갱신 메소드()
+    func refresh() {
+        self.indicatorView.startAnimating()
+        
+        // 1. 인증 헤더
+        let tk = TokenUtils()
+        let header = tk.getAuthorizationHeader()
+        
+        // 2. 리프레시 토큰 전달 준비
+        let refreshToken = tk.load("kr.co.rubypaper.MyMemory", account: "refreshToken")
+        let param: Parameters = ["refresh_token" : refreshToken!]
+        
+        // 3. 호출 및 응답
+        let url = "http://swiftapi.rubypaper.co.kr:2029/userAccount/refresh"
+        let refresh = AF.request(url, method: .post, parameters: param, encoding: JSONEncoding.default, headers: header)
+        
+        refresh.responseData() { response in
+            self.indicatorView.stopAnimating()
+            
+            switch response.result {
+            case .success(let data):
+                guard let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else { return }
+                let resultCode = json["result_code"] as! Int
+                
+                if resultCode == 0 { // 갱신 성공
+                    let accessToken = json["access_token"] as! String
+                    tk.save("kr.co.rubypapr.MyMemory", account: "accessToken", value: accessToken)
+                } else { // 액세스 토큰 만료
+                    self.alert("인증이 만료되었으므로 다시 로그인 해야합니다.")
+                    // 4-2. 로그아웃 처리
+                    OperationQueue.main.addOperation {
+                        self.commonLogout(true)
+                    }
+                }
+                break
+            case .failure(let error):
+                print("error : \(error.localizedDescription)")
+                break
+            }
+        }
+    }
+    
+    // 각종 실패나 오류 상황에 사용할 공용 로그아웃 메소드
+    func commonLogout(_ isLogin: Bool = false) {
+        // 저장된 기존 개인정보, 키 체인 데이터를 삭제하여 로그아웃 상태로 전환
+        let userInfo = UserInfoManager()
+        userInfo.deviceLogout()
+        
+        // 2. 현재의 화면이 프로필 화면이라면 바로 UI를 갱신
+        self.tv.reloadData()
+        self.profileImage.image = userInfo.profile
+        self.drawBtn()
+        
+        // 3. 기본 로그인 창 실행 여부
+        if isLogin {
+            self.doLogin(self)
+        }
+    }
+    
+        
 }
