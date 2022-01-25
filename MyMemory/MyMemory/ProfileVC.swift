@@ -141,8 +141,11 @@ class ProfileVC: UIViewController,UITableViewDelegate,UITableViewDataSource,UIIm
         
         alert.addAction(UIAlertAction(title: "취소", style: .cancel))
         alert.addAction(UIAlertAction(title: "확인", style: .destructive){ (_) in
-            if self.uinfo.logout() {
+            // 인디케이터 실행
+            self.indicatorView.startAnimating()
+            self.uinfo.logout() {
                 //로그아웃 시 처리 내용
+                self.indicatorView.stopAnimating() // 인디케이터 중지
                 self.tv.reloadData()
                 self.profileImage.image = self.uinfo.profile
                 self.drawBtn()
@@ -224,10 +227,20 @@ class ProfileVC: UIViewController,UITableViewDelegate,UITableViewDataSource,UIIm
     
     //MARK: UIImagePickeController DelegateMethod
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+        // 인디케이터 실행
+        self.indicatorView.startAnimating()
+        
         //이미지 선택하면 자동 호출
         if let img = info[UIImagePickerController.InfoKey.editedImage] as? UIImage {
-            self.uinfo.profile = img
-            self.profileImage.image = img
+            self.uinfo.newProfile(img, success: {
+                // 인디케이터 종료
+                self.indicatorView.stopAnimating()
+                self.profileImage.image = img
+            }, fail: { msg in
+                // 인디케이터 종료
+                self.indicatorView.stopAnimating()
+                self.alert(msg)
+            })
         }
         picker.dismiss(animated: true) // 이 구문을 누락하면 피커 컨트롤러창이 안닫힌다고 한다!!
     }
